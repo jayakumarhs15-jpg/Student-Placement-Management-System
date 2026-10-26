@@ -1,0 +1,23 @@
+﻿# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Java and Maven build output
+backend/target/
+**/target/
+
+# Node.js dependencies and build output
+frontend/node_modules/
+frontend/dist/
+
+# IDE files
+.idea/
+/.vscode/
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Local Git history backup
+.git-backup/
