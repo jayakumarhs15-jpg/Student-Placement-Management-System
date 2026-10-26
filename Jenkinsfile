@@ -1,4 +1,3 @@
-
 pipeline {
     agent any
 
@@ -10,15 +9,17 @@ pipeline {
     stages {
         stage('Verify Project') {
             steps {
-                bat 'if not exist "D:\\Student-Placement-Management-System\\backend\\mvnw.cmd" exit /b 1'
+                bat 'if not exist "backend\\mvnw.cmd" exit /b 1'
                 echo 'Project files verified.'
             }
         }
 
         stage('Build and Test') {
             steps {
-                dir('D:\\Student-Placement-Management-System\\backend') {
-                    bat 'mvnw.cmd clean test'
+                withCredentials([string(credentialsId: 'mysql-db-password', variable: 'DB_PASSWORD')]) {
+                    dir('backend') {
+                        bat 'mvnw.cmd clean test'
+                    }
                 }
             }
         }
@@ -26,7 +27,7 @@ pipeline {
         stage('Copy Test Reports') {
             steps {
                 bat 'if not exist "%WORKSPACE%\\test-reports" mkdir "%WORKSPACE%\\test-reports"'
-                bat 'copy /Y "D:\\Student-Placement-Management-System\\backend\\target\\surefire-reports\\*.xml" "%WORKSPACE%\\test-reports\\"'
+                bat 'copy /Y "backend\\target\\surefire-reports\\*.xml" "%WORKSPACE%\\test-reports\\"'
             }
         }
 
@@ -41,11 +42,9 @@ pipeline {
         success {
             echo 'Build and all tests passed successfully!'
         }
-
         failure {
             echo 'Build failed. Check the Console Output.'
         }
-
         always {
             echo 'Jenkins pipeline execution completed.'
         }
