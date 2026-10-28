@@ -949,3 +949,70 @@ tbody tr:last-child td {
     line-height: 1.7;
   }
 }
+
+.action-buttons {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.button.small {
+  min-height: 28px;
+  padding: 4px 10px;
+  font-size: 11px;
+}
+
+.button.danger {
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+  background: #fef2f2;
+}
+
+.button.danger:hover {
+  border-color: #ef4444;
+  color: #fff;
+  background: #ef4444;
+}
+
+.search-input {
+  min-width: 180px;
+  padding: 8px 12px;
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  font-size: 12px;
+  background: #ffffff;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.search-input:focus {
+  border-color: #4f46e5;
+  box-shadow: 0 0 0 2px #4f46e51f;
+}
+
+.status-select {
+  padding: 4px 8px;
+  border: 1px solid #d8dee8;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #374151;
+  background: #f9fafb;
+  cursor: pointer;
+  outline: none;
+}
+
+.status-select:focus {
+  border-color: #4f46e5;
+}
+
+.form-header {
+  margin-bottom: 16px;
+}
+
+.form-header h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: #1f2937;
+}

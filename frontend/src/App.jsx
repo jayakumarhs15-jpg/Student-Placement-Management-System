@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import './App.css'
 
 const sections = [
@@ -10,6 +10,14 @@ const sections = [
 ]
 
 const API = '/api'
+const APPLICATION_STATUSES = ['APPLIED', 'SHORTLISTED', 'INTERVIEW', 'SELECTED', 'REJECTED']
+
+const INITIAL_DATE = new Date().toLocaleDateString('en-IN', {
+  day: '2-digit',
+  month: 'short',
+  year: 'numeric',
+})
+const CURRENT_YEAR = new Date().getFullYear()
 
 function App() {
   const [active, setActive] = useState('dashboard')
@@ -20,8 +28,14 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+
+  // Form modal state
   const [showForm, setShowForm] = useState(false)
+  const [editingId, setEditingId] = useState(null)
   const [form, setForm] = useState({})
+
+  // Search filter state
+  const [searchTerm, setSearchTerm] = useState('')
 
   const endpoints = {
     students: '/students',
@@ -40,8 +54,21 @@ function App() {
     })
 
     if (!response.ok) {
-      const message = await response.text()
-      throw new Error(message || `Request failed (${response.status})`)
+      const text = await response.text()
+      let parsedMessage = text
+      try {
+        const errorJson = JSON.parse(text)
+        if (errorJson.message) {
+          parsedMessage = errorJson.message
+        } else if (errorJson.errors) {
+          parsedMessage = Object.entries(errorJson.errors)
+            .map(([k, v]) => `${k}: ${v}`)
+            .join('; ')
+        }
+      } catch {
+        // Fall back to raw text or HTTP status
+      }
+      throw new Error(parsedMessage || `Request failed (${response.status})`)
     }
 
     if (response.status === 204) return null
@@ -69,7 +96,7 @@ function App() {
       setApplications(Array.isArray(applicationData) ? applicationData : [])
     } catch (err) {
       setError(
-        `Could not load backend data. Check that Spring Boot is running on port 8081. ${err.message}`,
+        `Could not load backend data. Ensure the Spring Boot backend is active on port 8081: ${err.message}`,
       )
     } finally {
       setLoading(false)
@@ -77,13 +104,86 @@ function App() {
   }
 
   useEffect(() => {
-    loadData()
+    let ignore = false
+    async function init() {
+      try {
+        const [studentData, companyData, driveData, applicationData] =
+          await Promise.all([
+            request('/students'),
+            request('/companies'),
+            request('/drives'),
+            request('/applications'),
+          ])
+        if (!ignore) {
+          setStudents(Array.isArray(studentData) ? studentData : [])
+          setCompanies(Array.isArray(companyData) ? companyData : [])
+          setDrives(Array.isArray(driveData) ? driveData : [])
+          setApplications(Array.isArray(applicationData) ? applicationData : [])
+          setLoading(false)
+        }
+      } catch (err) {
+        if (!ignore) {
+          setError(
+            `Could not load backend data. Ensure the Spring Boot backend is active on port 8081: ${err.message}`,
+          )
+          setLoading(false)
+        }
+      }
+    }
+    init()
+    return () => {
+      ignore = true
+    }
   }, [])
 
-  function openForm(section) {
+  function openCreateForm() {
+    setEditingId(null)
     setForm({})
     setNotice('')
     setShowForm(true)
+  }
+
+  function openEditForm(record) {
+    setEditingId(record.id)
+    setForm({ ...record })
+    setNotice('')
+    setShowForm(true)
+  }
+
+  async function handleDelete(id) {
+    if (!window.confirm(`Are you sure you want to delete record #${id}?`)) {
+      return
+    }
+
+    setNotice('')
+    setError('')
+
+    try {
+      const section = active
+      await request(`${endpoints[section]}/${id}`, {
+        method: 'DELETE',
+      })
+      setNotice('Record deleted successfully.')
+      await loadData()
+    } catch (err) {
+      setError(`Could not delete record: ${err.message}`)
+    }
+  }
+
+  async function handleStatusChange(applicationId, newStatus) {
+    setNotice('')
+    setError('')
+
+    try {
+      await request(
+        `/applications/${applicationId}/status?status=${encodeURIComponent(newStatus)}`,
+        { method: 'PATCH' }
+      )
+      setNotice(`Application #${applicationId} updated to ${newStatus}.`)
+      await loadData()
+    } catch (err) {
+      setError(`Could not update status: ${err.message}`)
+    }
   }
 
   async function submitForm(event) {
@@ -100,15 +200,27 @@ function App() {
         payload.graduationYear = String(payload.graduationYear)
       } else if (section === 'drives') {
         payload.minimumCgpa = Number(payload.minimumCgpa)
+      } else if (section === 'applications') {
+        payload.studentId = Number(payload.studentId)
+        payload.driveId = Number(payload.driveId)
       }
 
-      await request(endpoints[section], {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      })
+      if (editingId) {
+        await request(`${endpoints[section]}/${editingId}`, {
+          method: 'PUT',
+          body: JSON.stringify(payload),
+        })
+        setNotice('Record updated successfully.')
+      } else {
+        await request(endpoints[section], {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        })
+        setNotice('Record created successfully.')
+      }
 
       setShowForm(false)
-      setNotice('Record created successfully.')
+      setEditingId(null)
       await loadData()
     } catch (err) {
       setError(`Could not save record: ${err.message}`)
@@ -130,13 +242,79 @@ function App() {
     applications: 'Applications',
   }
 
+  // Filtered lists
+  const filteredStudents = useMemo(() => {
+    if (!searchTerm) return students
+    const term = searchTerm.toLowerCase()
+    return students.filter(
+      (s) =>
+        s.name?.toLowerCase().includes(term) ||
+        s.email?.toLowerCase().includes(term) ||
+        s.department?.toLowerCase().includes(term) ||
+        s.graduationYear?.includes(term)
+    )
+  }, [students, searchTerm])
+
+  const filteredCompanies = useMemo(() => {
+    if (!searchTerm) return companies
+    const term = searchTerm.toLowerCase()
+    return companies.filter(
+      (c) =>
+        c.name?.toLowerCase().includes(term) ||
+        c.industry?.toLowerCase().includes(term) ||
+        c.location?.toLowerCase().includes(term) ||
+        c.contactEmail?.toLowerCase().includes(term)
+    )
+  }, [companies, searchTerm])
+
+  const filteredDrives = useMemo(() => {
+    if (!searchTerm) return drives
+    const term = searchTerm.toLowerCase()
+    return drives.filter(
+      (d) =>
+        d.jobTitle?.toLowerCase().includes(term) ||
+        d.companyName?.toLowerCase().includes(term) ||
+        d.location?.toLowerCase().includes(term)
+    )
+  }, [drives, searchTerm])
+
+  const filteredApplications = useMemo(() => {
+    if (!searchTerm) return applications
+    const term = searchTerm.toLowerCase()
+    return applications.filter(
+      (a) =>
+        String(a.studentId).includes(term) ||
+        String(a.driveId).includes(term) ||
+        a.status?.toLowerCase().includes(term)
+    )
+  }, [applications, searchTerm])
+
   function renderTable() {
     if (active === 'students') {
       return (
         <Table
-          columns={['ID', 'Name', 'Email', 'Department', 'CGPA', 'Graduation Year']}
-          rows={students.map((s) => [
-            s.id, s.name, s.email, s.department, s.cgpa, s.graduationYear,
+          columns={['ID', 'Name', 'Email', 'Department', 'CGPA', 'Graduation Year', 'Actions']}
+          rows={filteredStudents.map((s) => [
+            s.id,
+            s.name,
+            s.email,
+            s.department,
+            s.cgpa,
+            s.graduationYear,
+            <div className="action-buttons" key={`actions-${s.id}`}>
+              <button
+                className="button secondary small"
+                onClick={() => openEditForm(s)}
+              >
+                Edit
+              </button>
+              <button
+                className="button danger small"
+                onClick={() => handleDelete(s.id)}
+              >
+                Delete
+              </button>
+            </div>,
           ])}
         />
       )
@@ -145,9 +323,27 @@ function App() {
     if (active === 'companies') {
       return (
         <Table
-          columns={['ID', 'Company', 'Industry', 'Location', 'Contact Email']}
-          rows={companies.map((c) => [
-            c.id, c.name, c.industry, c.location, c.contactEmail,
+          columns={['ID', 'Company', 'Industry', 'Location', 'Contact Email', 'Actions']}
+          rows={filteredCompanies.map((c) => [
+            c.id,
+            c.name,
+            c.industry,
+            c.location,
+            c.contactEmail,
+            <div className="action-buttons" key={`actions-${c.id}`}>
+              <button
+                className="button secondary small"
+                onClick={() => openEditForm(c)}
+              >
+                Edit
+              </button>
+              <button
+                className="button danger small"
+                onClick={() => handleDelete(c.id)}
+              >
+                Delete
+              </button>
+            </div>,
           ])}
         />
       )
@@ -156,9 +352,28 @@ function App() {
     if (active === 'drives') {
       return (
         <Table
-          columns={['ID', 'Job Title', 'Company', 'Location', 'Minimum CGPA', 'Deadline']}
-          rows={drives.map((d) => [
-            d.id, d.jobTitle, d.companyName, d.location, d.minimumCgpa, d.applicationDeadline,
+          columns={['ID', 'Job Title', 'Company', 'Location', 'Minimum CGPA', 'Deadline', 'Actions']}
+          rows={filteredDrives.map((d) => [
+            d.id,
+            d.jobTitle,
+            d.companyName,
+            d.location,
+            d.minimumCgpa,
+            d.applicationDeadline,
+            <div className="action-buttons" key={`actions-${d.id}`}>
+              <button
+                className="button secondary small"
+                onClick={() => openEditForm(d)}
+              >
+                Edit
+              </button>
+              <button
+                className="button danger small"
+                onClick={() => handleDelete(d.id)}
+              >
+                Delete
+              </button>
+            </div>,
           ])}
         />
       )
@@ -167,9 +382,33 @@ function App() {
     if (active === 'applications') {
       return (
         <Table
-          columns={['ID', 'Student ID', 'Drive ID', 'Status', 'Applied At']}
-          rows={applications.map((a) => [
-            a.id, a.studentId, a.driveId, a.status, a.appliedAt,
+          columns={['ID', 'Student ID', 'Drive ID', 'Status', 'Applied At', 'Actions']}
+          rows={filteredApplications.map((a) => [
+            a.id,
+            a.studentId,
+            a.driveId,
+            <select
+              key={`status-${a.id}`}
+              className="status-select"
+              value={a.status}
+              onChange={(e) => handleStatusChange(a.id, e.target.value)}
+            >
+              {APPLICATION_STATUSES.map((st) => (
+                <option key={st} value={st}>
+                  {st}
+                </option>
+              ))}
+            </select>,
+            a.appliedAt ? a.appliedAt.replace('T', ' ').slice(0, 19) : '—',
+            <div className="action-buttons" key={`actions-${a.id}`}>
+              <button
+                className="button danger small"
+                onClick={() => handleDelete(a.id)}
+                title="Withdraw Application"
+              >
+                Withdraw
+              </button>
+            </div>,
           ])}
         />
       )
@@ -210,6 +449,9 @@ function App() {
 
     return (
       <form className="record-form" onSubmit={submitForm}>
+        <div className="form-header">
+          <h3>{editingId ? `Edit ${titles[active].slice(0, -1)} #${editingId}` : `New ${titles[active].slice(0, -1)}`}</h3>
+        </div>
         <div className="form-grid">
           {(fields[active] || []).map(([key, label, type]) => (
             <label key={key}>
@@ -233,7 +475,7 @@ function App() {
             Cancel
           </button>
           <button type="submit" className="button primary">
-            Save Record
+            {editingId ? 'Update Record' : 'Save Record'}
           </button>
         </div>
       </form>
@@ -260,6 +502,7 @@ function App() {
               onClick={() => {
                 setActive(section.id)
                 setShowForm(false)
+                setSearchTerm('')
                 setNotice('')
                 setError('')
               }}
@@ -289,9 +532,7 @@ function App() {
             <h1>{titles[active]}</h1>
           </div>
           <div className="topbar-right">
-            <div className="date-chip">{new Date().toLocaleDateString('en-IN', {
-              day: '2-digit', month: 'short', year: 'numeric',
-            })}</div>
+            <div className="date-chip">{INITIAL_DATE}</div>
             <div className="avatar">A</div>
           </div>
         </header>
@@ -306,7 +547,7 @@ function App() {
 
           {notice && (
             <div className="alert success-alert">
-              {notice}
+              <span>{notice}</span>
               <button onClick={() => setNotice('')}>×</button>
             </div>
           )}
@@ -392,7 +633,7 @@ function App() {
                     <strong>{loading ? '—' : applications.length}</strong>
                     <span>Total applications</span>
                   </div>
-                  {['APPLIED', 'SHORTLISTED', 'INTERVIEW', 'SELECTED', 'REJECTED'].map((status) => {
+                  {APPLICATION_STATUSES.map((status) => {
                     const count = applications.filter((a) => a.status === status).length
                     const percent = applications.length ? (count / applications.length) * 100 : 0
                     return (
@@ -418,14 +659,21 @@ function App() {
                   <p>View and manage records stored in your database.</p>
                 </div>
                 <div className="table-actions">
+                  <input
+                    type="search"
+                    className="search-input"
+                    placeholder={`Search ${titles[active]}…`}
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                  />
                   <button className="button secondary" onClick={loadData}>↻ Refresh</button>
                   {active !== 'applications' && (
-                    <button className="button primary" onClick={() => openForm(active)}>
+                    <button className="button primary" onClick={openCreateForm}>
                       + Add {active === 'drives' ? 'Drive' : active.slice(0, -1).replace(/^./, (c) => c.toUpperCase())}
                     </button>
                   )}
                   {active === 'applications' && (
-                    <button className="button primary" onClick={() => openForm(active)}>
+                    <button className="button primary" onClick={openCreateForm}>
                       + Apply to Drive
                     </button>
                   )}
@@ -443,7 +691,7 @@ function App() {
           )}
 
           <footer className="page-footer">
-            <span>© {new Date().getFullYear()} PlaceTrack · Student Placement Management System</span>
+            <span>© {CURRENT_YEAR} PlaceTrack · Student Placement Management System</span>
             <span>React + Spring Boot + MySQL</span>
           </footer>
         </div>
@@ -454,7 +702,7 @@ function App() {
 
 function Table({ columns, rows }) {
   if (!rows.length) {
-    return <div className="empty-state">No records found. Add a record to get started.</div>
+    return <div className="empty-state">No records found. Add a record or refine your search to get started.</div>
   }
 
   return (
@@ -468,7 +716,7 @@ function Table({ columns, rows }) {
             <tr key={`${row[0]}-${index}`}>
               {row.map((cell, cellIndex) => (
                 <td key={cellIndex}>
-                  {cell === null || cell === undefined || cell === '' ? '—' : String(cell)}
+                  {cell === null || cell === undefined || cell === '' ? '—' : cell}
                 </td>
               ))}
             </tr>

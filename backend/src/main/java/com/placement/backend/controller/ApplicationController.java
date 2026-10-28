@@ -159,4 +159,15 @@ public class ApplicationController {
 
         return applicationRepository.save(application);
     }
+
+    // 7. Withdraw / delete an application
+    @DeleteMapping("/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteApplication(@PathVariable Long id) {
+        Application application = applicationRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND, "Application not found"));
+
+        applicationRepository.delete(application);
+    }
 }
